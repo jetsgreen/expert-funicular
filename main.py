@@ -1,20 +1,18 @@
 #pip install streamlit langchain langchain-openai beautifulsoup4 chomadb
 import streamlit as st
-# Storing the converstion between AI and Human, we need to use the schemas provided by langchain: see imports below
 from langchain_core.messages import AIMessage, HumanMessage
 from langchain_community.document_loaders import WebBaseLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import Chroma
 from langchain_openai import OpenAIEmbeddings, ChatOpenAI
-from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain.chains import create_history_aware_retriever
 from dotenv import load_dotenv
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain.chains import create_history_aware_retriever, create_retrieval_chain
+from langchain.chains.combine_documents import create_stuff_documents_chain
 
 load_dotenv()
 
 
-def get_response(user_input):
-    return "I don't know"
 
 def get_vectorstore_from_url(url):
 
@@ -47,15 +45,36 @@ def get_context_retriever_chain(vector_store):
 
     return retriever_chain
 
+def get_conversational_rag_chain(retriever_chain):
+
+    llm = ChatOpenAI()
+
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", "Answer the user's questions based on the below context:\n\n{context}"),
+        MessagesPlaceholder(variable_name="chat_history"),
+        ("user", "{input}")
+    ])
+    
+
+    stuff_documents_chain = create_stuff_documents_chain(llm, prompt)
+
+    return create_retrieval_chain(retriever_chain, stuff_documents_chain)
+
+def get_response(user_input):
+    retriever_chain = get_context_retriever_chain(st.session_state.vectore_store)
+    conversation_rag_chain =  get_conversational_rag_chain(retriever_chain)
+
+         # response = get_response(user_query)
+    response = conversation_rag_chain.invoke({
+            "chat_history": st.session_state.chat_history,
+            "input": user_query
+        })
+    return response["answer"]
+
 # App Config
 st.set_page_config(page_title="Flexdevs Chatbot", page_icon="robot head")
 st.title("Chat with websites")
 
-# make the history of chat persist otherwise print AIMessage to sidebar
-if "chat_history" not in st.session_state:
-    st.session_state.chat_history = [
-    AIMessage(content="Hello, I'm Flexdev, how can I help you with this website")    
-    ]
 
 # Sidebar
 with st.sidebar:
@@ -66,6 +85,17 @@ if website_url is None or website_url =="":
     st.info("Please enter a website URL in Settings to proceed")
 
 else:
+
+    # make the history of chat persist otherwise print AIMessage to sidebar
+    if "chat_history" not in st.session_state:
+        st.session_state.chat_history = [
+            AIMessage(content="Hello, I'm Flexdev, how can I help you with this website")    
+    ]
+    if "vector_store" not in st.session_state:
+        st.session_state.vectore_store = get_vectorstore_from_url(website_url)
+
+
+    # Create conversation state    
     vector_store = get_vectorstore_from_url(website_url)
     retriever_chain = get_context_retriever_chain(vector_store)
     # document_chunks = get_vectorstore_from_url(website_url)
@@ -76,15 +106,16 @@ else:
     # User input
     user_query = st.chat_input("Type your message here...")
     if user_query is not None and user_query !="":
+   
         response = get_response(user_query)
         st.session_state.chat_history.append(HumanMessage(content=user_query))
         st.session_state.chat_history.append(AIMessage(content=response))
 
-        retrieved_documents = retriever_chain.invoke({
-            "chat_history": st.session_state.chat_history,
-            "input": user_query
-        })
-        st.write(retrieved_documents)
+        # retrieved_documents = retriever_chain.invoke({
+        #     "chat_history": st.session_state.chat_history,
+        #     "input": user_query
+        # })
+        # st.write(retrieved_documents)
     # Now that we added the code to collect chat history, we won't need the test code below
     # with st.chat_message("Human"):
     #      st.write(user_query)
